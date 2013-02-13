@@ -9,7 +9,8 @@
 #include <linux/sched.h>
 #include <linux/file.h>
 #include <linux/mm.h>
-
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 
 struct funcky_t {
 	struct cdev cdev;
@@ -33,7 +34,8 @@ struct path_list {
 	char path[0];
 };
 
-struct list_head path_list;
+static struct list_head path_list_head;
+static struct dentry *debug_dentry;
 
 static struct file *my_get_mm_exe_file(struct mm_struct *mm)
 {
@@ -48,7 +50,6 @@ static struct file *my_get_mm_exe_file(struct mm_struct *mm)
 	up_read(&mm->mmap_sem);
 	return exe_file;
 }
-
 
 static int get_exe_path(struct task_struct *task)
 {
@@ -90,8 +91,8 @@ static int get_exe_path(struct task_struct *task)
 	}
 	strncpy(plist->path, path, len);
 	get_task_comm(plist->name, task);
-	list_add(&plist->list, &path_list);
-	printk("%16s: %s\n", plist->name, plist->path);
+	list_add(&plist->list, &path_list_head);
+	printk("%16s : %s\n", plist->name, plist->path);
 
 free_buf:
 	kfree(pathbuf);
@@ -104,7 +105,7 @@ static void free_used_mem(void)
 {
 	struct path_list *p, *tmp;
 
-	list_for_each_entry_safe(p, tmp, &path_list, list) {
+	list_for_each_entry_safe(p, tmp, &path_list_head, list) {
 		list_del(&p->list);
 		kfree(p);
 	}
@@ -112,20 +113,9 @@ static void free_used_mem(void)
 
 static int funcky_open(struct inode *inode, struct file *filp)
 {
-	struct task_struct *task = current;
-	int ret;
-
 	if (funcky.count)
 		return -EBUSY;
 	funcky.count++;
-
-	for_each_process(task) {
-		ret = get_exe_path(task);
-		if (ret) {
-			free_used_mem();
-			return -ENOMEM;
-		}
-	}
 
 	return 0;
 }
@@ -134,8 +124,6 @@ static int funcky_open(struct inode *inode, struct file *filp)
 int funcky_release(struct inode *inode, struct file *filp)
 {
 	funcky.count = 0;
-
-	free_used_mem();
 
 	return 0;
 }
@@ -191,10 +179,34 @@ static struct file_operations funcky_fops = {
 	.unlocked_ioctl = funcky_ioctl,
 };
 
+static int funcky_dump(struct seq_file *sf, void *private)
+{
+	struct path_list *plist;
+
+	list_for_each_entry(plist, &path_list_head, list) {
+		seq_printf(sf, "%15s : %s\n", plist->name, plist->path);
+	}
+
+	return 0;
+}
+
+static int funcky_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, funcky_dump, NULL);
+}
+
+static const struct file_operations funcky_debug_fops = {
+	.open = funcky_debug_open,
+	.release = single_release,
+	.read = seq_read,
+};
+
 static int __init funcky_init(void) {
 	int res;
 	dev_t dev;
 	struct device *cd;
+	struct task_struct *task = current;
+	int ret;
 
 	res = alloc_chrdev_region(&dev, 0, 1, "funcky_dev");
 	if (res < 0) {
@@ -220,7 +232,19 @@ static int __init funcky_init(void) {
 		goto del_dev;
 	}
 
-	INIT_LIST_HEAD(&path_list);
+	INIT_LIST_HEAD(&path_list_head);
+
+	for_each_process(task) {
+		ret = get_exe_path(task);
+		if (ret) {
+			free_used_mem();
+			return -ENOMEM;
+		}
+	}
+	debug_dentry = debugfs_create_file("main_funcky",
+				S_IRUGO, NULL, NULL, &funcky_debug_fops);
+	if (IS_ERR_OR_NULL(debug_dentry))
+		pr_err("%s: failed to create main_funcky file\n", __func__);
 
 	printk("%s\n", __func__);
 	return 0;
@@ -235,6 +259,8 @@ err:
 static void __exit funcky_exit(void)
 {
 	printk("%s\n", __func__);
+	free_used_mem();
+	debugfs_remove(debug_dentry);
 	device_destroy(devclass, funcky.cdev.dev);
 	class_destroy(devclass);
 	cdev_del(&funcky.cdev);
