@@ -62,7 +62,8 @@ static int get_exe_path(struct task_struct *task)
 
 	mm = get_task_mm(task);
 	if (!mm)
-		return -ENOENT;
+		/* kernel threads do not have mm */
+		return ret;
 	exe_file = my_get_mm_exe_file(mm);
 	if (!exe_file) {
 		printk("path unknown\n");
@@ -112,13 +113,18 @@ static void free_used_mem(void)
 static int funcky_open(struct inode *inode, struct file *filp)
 {
 	struct task_struct *task = current;
+	int ret;
 
 	if (funcky.count)
 		return -EBUSY;
 	funcky.count++;
 
 	for_each_process(task) {
-		get_exe_path(task);
+		ret = get_exe_path(task);
+		if (ret) {
+			free_used_mem();
+			return -ENOMEM;
+		}
 	}
 
 	return 0;
