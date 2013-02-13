@@ -92,7 +92,6 @@ static int get_exe_path(struct task_struct *task)
 	strncpy(plist->path, path, len);
 	get_task_comm(plist->name, task);
 	list_add(&plist->list, &path_list_head);
-	printk("%16s : %s\n", plist->name, plist->path);
 
 free_buf:
 	kfree(pathbuf);
@@ -120,23 +119,63 @@ static int funcky_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-
-int funcky_release(struct inode *inode, struct file *filp)
+static int funcky_release(struct inode *inode, struct file *filp)
 {
 	funcky.count = 0;
 
 	return 0;
 }
 
-ssize_t funcky_read(struct file *filp, char __user *buf, size_t count,
-			loff_t *f_pos)
+static struct path_list *lookup(char *name)
 {
-	int res = 0;
+	struct path_list *p;
+	struct path_list *item = NULL;
 
-	return res;
+	if (!name)
+		return NULL;
+
+	list_for_each_entry(p, &path_list_head, list) {
+		if (!strcmp(name, p->name)) {
+			item = p;
+			break;
+		}
+	}
+
+	return item;
 }
 
-ssize_t funcky_write(struct file *filp, const char __user *buf, size_t count,
+static ssize_t funcky_read(struct file *filp, char __user *buf, size_t count,
+			loff_t *f_pos)
+{
+	struct path_list *p;
+	size_t len;
+	char *pbuf;
+	int ret;
+
+	p = lookup(app_name);
+	if (!p)
+		return -EINVAL;
+
+	len = strlen(p->path) + 1;
+	if (*f_pos != 0)
+		return 0;
+	pbuf = kmalloc(len, GFP_KERNEL);
+	if (!pbuf)
+		return -ENOMEM;
+	strncpy(pbuf, p->path, len);
+	pbuf[len - 1] = '\n';
+	if (copy_to_user(buf, pbuf, len)) {
+		ret = -EFAULT;
+		goto ret;
+	}
+	*f_pos += len;
+	ret = len;
+ret:
+	kfree(pbuf);
+	return ret;
+}
+
+static ssize_t funcky_write(struct file *filp, const char __user *buf, size_t count,
 			loff_t *f_pos)
 {
 	int res = 0;
