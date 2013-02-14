@@ -159,7 +159,7 @@ static ssize_t funcky_read(struct file *filp, char __user *buf, size_t count,
 	len = strlen(p->path) + 1;
 	if (*f_pos != 0)
 		return 0;
-	pbuf = kmalloc(len, GFP_KERNEL);
+	pbuf = kmalloc(len, GFP_TEMPORARY);
 	if (!pbuf)
 		return -ENOMEM;
 	strncpy(pbuf, p->path, len);
