@@ -174,17 +174,23 @@ static ssize_t funcky_read(struct file *filp, char __user *buf, size_t count,
 	char *pbuf;
 	int ret;
 
+	if (*f_pos != 0)
+		return 0;
+
 	p = lookup(app_name);
 	if (!p)
 		return -EINVAL;
 
+	mutex_lock(&path_list_lock);
 	len = strlen(p->path) + 1;
-	if (*f_pos != 0)
-		return 0;
 	pbuf = kmalloc(len, GFP_TEMPORARY);
-	if (!pbuf)
+	if (!pbuf) {
+		mutex_unlock(&path_list_lock);
 		return -ENOMEM;
+	}
 	strncpy(pbuf, p->path, len);
+	mutex_unlock(&path_list_lock);
+
 	pbuf[len - 1] = '\n';
 	if (copy_to_user(buf, pbuf, len)) {
 		ret = -EFAULT;
