@@ -52,7 +52,7 @@ static struct file *my_get_mm_exe_file(struct mm_struct *mm)
 	return exe_file;
 }
 
-static int get_exe_path(struct task_struct *task)
+static int build_tasks_database(struct task_struct *task)
 {
 	struct mm_struct *mm;
         struct file *exe_file;
@@ -286,7 +286,7 @@ static int __init funcky_init(void) {
 	mutex_init(&path_list_lock);
 
 	for_each_process(task) {
-		ret = get_exe_path(task);
+		ret = build_tasks_database(task);
 		if (ret) {
 			free_used_mem();
 			return -ENOMEM;
