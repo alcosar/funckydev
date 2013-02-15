@@ -53,6 +53,11 @@ static struct file *my_get_mm_exe_file(struct mm_struct *mm)
 	return exe_file;
 }
 
+/*
+ * find entry specified by name
+ * NOTE! the caller is responsible for locking before
+ * calling
+ */
 static struct path_list *lookup(char *name)
 {
 	struct path_list *p;
@@ -206,8 +211,8 @@ static ssize_t funcky_write(struct file *filp, const char __user *buf, size_t co
 	return len;
 }
 
-#define CLEAR_DB	_IOW('h', 1, char [16])	/* clear data base */
-#define CLEAR_NAME	_IOW('h', 2, char [16])	/* clear info for specific name */
+#define CLEAR_DB	_IOW('h', 1, char [TASK_COMM_LEN])	/* clear data base */
+#define CLEAR_NAME	_IOW('h', 2, char [TASK_COMM_LEN])	/* clear info for specific name */
 
 long funcky_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
@@ -228,7 +233,9 @@ long funcky_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (!p)
 			return -EINVAL;
 		else {
+			mutex_lock(&path_list_lock);
 			list_del(&p->list);
+			mutex_unlock(&path_list_lock);
 			kfree(p);
 		}
 		break;
