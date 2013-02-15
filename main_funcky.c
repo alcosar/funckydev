@@ -189,18 +189,22 @@ static ssize_t funcky_write(struct file *filp, const char __user *buf, size_t co
 	return len;
 }
 
-#define CLEAR_DB	1	/* clear data base */
-#define CLEAR_NAME	2	/* clear info for specific name */
+#define CLEAR_DB	_IOW('h', 1, char [16])	/* clear data base */
+#define CLEAR_NAME	_IOW('h', 2, char [16])	/* clear info for specific name */
 
 long funcky_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	int res = 0;
 
+	if ((_IOC_TYPE(cmd) != 'h'))
+		return -ENOTTY;
 	switch (cmd) {
 	case CLEAR_DB:
 		break;
 	case CLEAR_NAME:
 		res = copy_from_user(clear_name, (char *)arg, sizeof(clear_name));
+		if (res)
+			return -EFAULT;
 		break;
 	default:
 		break;
