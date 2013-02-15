@@ -30,6 +30,7 @@ struct db_item {
 
 struct path_list {
 	struct list_head list;
+	int count;
 	char name[TASK_COMM_LEN];
 	char path[0];
 };
@@ -52,12 +53,33 @@ static struct file *my_get_mm_exe_file(struct mm_struct *mm)
 	return exe_file;
 }
 
+static struct path_list *lookup(char *name)
+{
+	struct path_list *p;
+	struct path_list *item = NULL;
+
+	if (!name)
+		return NULL;
+
+	mutex_lock(&path_list_lock);
+	list_for_each_entry(p, &path_list_head, list) {
+		if (!strcmp(name, p->name)) {
+			item = p;
+			break;
+		}
+	}
+	mutex_unlock(&path_list_lock);
+
+	return item;
+}
+
 static int build_tasks_database(struct task_struct *task)
 {
 	struct mm_struct *mm;
         struct file *exe_file;
 	char *pathbuf;
 	char *path;
+	char task_name[TASK_COMM_LEN];
 	int ret = 0;
 	size_t len;
 	struct path_list *plist;
@@ -69,6 +91,15 @@ static int build_tasks_database(struct task_struct *task)
 	exe_file = my_get_mm_exe_file(mm);
 	if (!exe_file) {
 		printk("path unknown\n");
+		return 0;
+	}
+
+	get_task_comm(task_name, task);
+
+	/* check if we already have record for this task */
+	plist = lookup(task_name);
+	if (plist) {
+		++plist->count;
 		return 0;
 	}
 
@@ -91,7 +122,9 @@ static int build_tasks_database(struct task_struct *task)
 		goto free_buf;
 	}
 	strncpy(plist->path, path, len);
-	get_task_comm(plist->name, task);
+	len = strlen(task_name) + 1;
+	strncpy(plist->name, task_name, len);
+	plist->count = 1;
 	list_add(&plist->list, &path_list_head);
 
 free_buf:
@@ -126,26 +159,6 @@ static int funcky_release(struct inode *inode, struct file *filp)
 	atomic_set(&funcky.count, 1);
 
 	return 0;
-}
-
-static struct path_list *lookup(char *name)
-{
-	struct path_list *p;
-	struct path_list *item = NULL;
-
-	if (!name)
-		return NULL;
-
-	mutex_lock(&path_list_lock);
-	list_for_each_entry(p, &path_list_head, list) {
-		if (!strcmp(name, p->name)) {
-			item = p;
-			break;
-		}
-	}
-	mutex_unlock(&path_list_lock);
-
-	return item;
 }
 
 static ssize_t funcky_read(struct file *filp, char __user *buf, size_t count,
@@ -232,7 +245,8 @@ static int funcky_dump(struct seq_file *sf, void *private)
 
 	mutex_lock(&path_list_lock);
 	list_for_each_entry(plist, &path_list_head, list) {
-		seq_printf(sf, "%15s : %s\n", plist->name, plist->path);
+		seq_printf(sf, "%15s : %2d : %s\n",
+			   plist->name, plist->count, plist->path);
 	}
 	mutex_unlock(&path_list_lock);
 
