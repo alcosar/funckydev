@@ -212,16 +212,25 @@ static ssize_t funcky_write(struct file *filp, const char __user *buf, size_t co
 long funcky_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	int res = 0;
+	struct path_list *p;
 
 	if ((_IOC_TYPE(cmd) != 'h'))
 		return -ENOTTY;
 	switch (cmd) {
 	case CLEAR_DB:
+		free_used_mem();
 		break;
 	case CLEAR_NAME:
 		res = copy_from_user(clear_name, (char *)arg, sizeof(clear_name));
 		if (res)
 			return -EFAULT;
+		p = lookup(clear_name);
+		if (!p)
+			return -EINVAL;
+		else {
+			list_del(&p->list);
+			kfree(p);
+		}
 		break;
 	default:
 		break;
