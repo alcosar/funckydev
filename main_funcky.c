@@ -14,7 +14,7 @@
 
 struct funcky_t {
 	struct cdev cdev;
-	int count;	/* only one device could be served */
+	atomic_t count;	/* only one device can be served */
 };
 
 static struct funcky_t funcky;
@@ -35,6 +35,7 @@ struct path_list {
 };
 
 static struct list_head path_list_head;
+static DEFINE_MUTEX(path_list_lock);
 static struct dentry *debug_dentry;
 
 static struct file *my_get_mm_exe_file(struct mm_struct *mm)
@@ -104,24 +105,25 @@ static void free_used_mem(void)
 {
 	struct path_list *p, *tmp;
 
+	mutex_lock(&path_list_lock);
 	list_for_each_entry_safe(p, tmp, &path_list_head, list) {
 		list_del(&p->list);
 		kfree(p);
 	}
+	mutex_unlock(&path_list_lock);
 }
 
 static int funcky_open(struct inode *inode, struct file *filp)
 {
-	if (funcky.count)
+	if (!atomic_dec_and_test(&funcky.count))
 		return -EBUSY;
-	funcky.count++;
 
 	return 0;
 }
 
 static int funcky_release(struct inode *inode, struct file *filp)
 {
-	funcky.count = 0;
+	atomic_set(&funcky.count, 1);
 
 	return 0;
 }
@@ -134,12 +136,14 @@ static struct path_list *lookup(char *name)
 	if (!name)
 		return NULL;
 
+	mutex_lock(&path_list_lock);
 	list_for_each_entry(p, &path_list_head, list) {
 		if (!strcmp(name, p->name)) {
 			item = p;
 			break;
 		}
 	}
+	mutex_unlock(&path_list_lock);
 
 	return item;
 }
@@ -226,9 +230,11 @@ static int funcky_dump(struct seq_file *sf, void *private)
 {
 	struct path_list *plist;
 
+	mutex_lock(&path_list_lock);
 	list_for_each_entry(plist, &path_list_head, list) {
 		seq_printf(sf, "%15s : %s\n", plist->name, plist->path);
 	}
+	mutex_unlock(&path_list_lock);
 
 	return 0;
 }
@@ -265,6 +271,7 @@ static int __init funcky_init(void) {
 		pr_err("%s: %d Error: %d", __func__, __LINE__, res);
 		goto err;
 	}
+	atomic_set(&funcky.count, 1);
 
 	/* create node in /dev/funckydev */
 	devclass = class_create(THIS_MODULE, "funcky_class");
@@ -276,6 +283,7 @@ static int __init funcky_init(void) {
 	}
 
 	INIT_LIST_HEAD(&path_list_head);
+	mutex_init(&path_list_lock);
 
 	for_each_process(task) {
 		ret = get_exe_path(task);
