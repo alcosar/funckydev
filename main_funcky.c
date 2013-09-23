@@ -11,6 +11,8 @@
 #include <linux/mm.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#include <linux/kprobes.h>
+#include <linux/kallsyms.h>
 
 struct funcky_t {
 	struct cdev cdev;
@@ -78,6 +80,27 @@ static struct path_list *lookup(char *name)
 	return item;
 }
 
+static int add_task_to_database(char *task_path, char *task_name)
+{
+	struct path_list *plist;
+	size_t len = strlen(task_path) + 1;
+
+	plist = kmalloc(sizeof(*plist) + len, GFP_KERNEL);
+	if (!plist)
+		return -ENOMEM;
+
+	strncpy(plist->path, task_path, len);
+
+	len = strlen(task_name) + 1;
+	strncpy(plist->name, task_name, len);
+
+	plist->count = 1;
+
+	list_add(&plist->list, &path_list_head);
+
+	return 0;
+}
+
 static int build_tasks_database(struct task_struct *task)
 {
 	struct mm_struct *mm;
@@ -86,7 +109,6 @@ static int build_tasks_database(struct task_struct *task)
 	char *path;
 	char task_name[TASK_COMM_LEN];
 	int ret = 0;
-	size_t len;
 	struct path_list *plist;
 
 	mm = get_task_mm(task);
@@ -120,17 +142,7 @@ static int build_tasks_database(struct task_struct *task)
 		goto free_buf;
 	}
 
-	len = strlen(path) + 1;
-	plist = kmalloc(sizeof(*plist) + len, GFP_KERNEL);
-	if (!plist) {
-		ret = -ENOMEM;
-		goto free_buf;
-	}
-	strncpy(plist->path, path, len);
-	len = strlen(task_name) + 1;
-	strncpy(plist->name, task_name, len);
-	plist->count = 1;
-	list_add(&plist->list, &path_list_head);
+	add_task_to_database(path, task_name);
 
 free_buf:
 	kfree(pathbuf);
@@ -286,6 +298,42 @@ static const struct file_operations funcky_debug_fops = {
 	.read = seq_read,
 };
 
+/*
+ * Pre-entry point for do_execve.
+ */
+static int my_do_execve(char *filename,
+                        char __user *__user *argv,
+                        char __user *__user *envp,
+                        struct pt_regs * regs)
+{
+	char *task_name;
+	struct path_list *plist;
+
+        printk("executing: %s\n", filename);
+
+	task_name = strrchr(filename, '/') + 1;
+	printk("%s\n", task_name);
+
+	/* check if we already have a record for this task */
+	plist = lookup(task_name);
+	if (plist)
+		++plist->count;
+	else {
+		if (add_task_to_database(filename, task_name))
+			printk("%s: failed to allocate memory\n", __func__);
+	}
+
+        /* Always end with a call to jprobe_return(). */
+        jprobe_return();
+
+        /*NOTREACHED*/
+        return 0;
+}
+
+static struct jprobe my_jprobe = {
+        .entry = (kprobe_opcode_t *) my_do_execve
+};
+
 static int __init funcky_init(void) {
 	int res;
 	dev_t dev;
@@ -333,6 +381,18 @@ static int __init funcky_init(void) {
 	if (IS_ERR_OR_NULL(debug_dentry))
 		pr_err("%s: failed to create main_funcky file\n", __func__);
 
+        my_jprobe.kp.addr =
+                (kprobe_opcode_t *) kallsyms_lookup_name("do_execve");
+	if (!my_jprobe.kp.addr)
+		printk("%s: do_execve not found\n", __func__);
+
+	ret = register_jprobe(&my_jprobe);
+	if (ret < 0)
+		printk("%s: failed to register jprobe\n", __func__);
+
+        my_jprobe.kp.addr =
+                (kprobe_opcode_t *) kallsyms_lookup_name("do_execve");
+
 	printk("%s\n", __func__);
 	return 0;
 
@@ -346,6 +406,7 @@ err:
 static void __exit funcky_exit(void)
 {
 	printk("%s\n", __func__);
+        unregister_jprobe(&my_jprobe);
 	free_used_mem();
 	debugfs_remove(debug_dentry);
 	device_destroy(devclass, funcky.cdev.dev);
