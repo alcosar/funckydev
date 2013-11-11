@@ -8,9 +8,9 @@ It records task name, path to the task executable, the number of times task
 was running during module's life.
 To track what task is running kprobe(jprobe) to do_execve call is used.
 Kprobe should be enabled in the kernel wich is the case for Ubuntu kernels
-starting at least from k3.2 until now(3.11):
+starting at least from k3.2 until now(3.8):
 
-$ cat /boot/config-3.11.0-12-generic | grep -i kprobe
+$ cat /boot/config-3.8.0-31-generic | grep -i kprobe
 CONFIG_KPROBES=y
 CONFIG_KPROBES_ON_FTRACE=y
 CONFIG_HAVE_KPROBES=y
@@ -35,3 +35,5 @@ $ sudo cat /sys/kernel/debug/main_funcky
 
 The user can clear all the records or a record for a specific task using
 ioctl system call.
+
+On 3.11 jprobe is not called.
